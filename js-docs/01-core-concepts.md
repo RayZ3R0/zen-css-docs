@@ -211,6 +211,125 @@ const FeatureModule = {
 };
 ```
 
+## Performance Patterns
+
+### Batch Processing
+
+```javascript
+const BATCH_SIZE = 100; // Maximum items per batch
+
+function processBatch(items, processor) {
+  let batchCount = 0;
+
+  // Process in chunks
+  for (let i = 0; i < items.length && batchCount < BATCH_SIZE; i++) {
+    processor(items[i]);
+    batchCount++;
+  }
+
+  // Continue processing if needed
+  if (batchCount < items.length) {
+    setTimeout(() => processBatch(items.slice(batchCount)), 100);
+  }
+}
+```
+
+### Rate Limiting
+
+```javascript
+const RateLimiter = {
+  lastRunTime: 0,
+  interval: 10 * 60 * 1000, // 10 minutes
+
+  canRun() {
+    const now = Date.now();
+    if (now - this.lastRunTime < this.interval) {
+      return false;
+    }
+    this.lastRunTime = now;
+    return true;
+  },
+
+  execute(fn) {
+    if (this.canRun()) {
+      fn();
+    }
+  },
+};
+```
+
+### Resource Management
+
+```javascript
+const ResourceManager = {
+  resources: new Set(),
+
+  track(resource) {
+    this.resources.add(resource);
+  },
+
+  untrack(resource) {
+    this.resources.delete(resource);
+  },
+
+  cleanup() {
+    for (const resource of this.resources) {
+      try {
+        if (resource.close) resource.close();
+        if (resource.destroy) resource.destroy();
+        if (resource.dispose) resource.dispose();
+      } catch (e) {
+        console.error("Failed to clean up resource:", e);
+      }
+    }
+    this.resources.clear();
+  },
+};
+
+// Usage
+window.addEventListener("unload", () => {
+  ResourceManager.cleanup();
+});
+```
+
+### Error Monitoring
+
+```javascript
+const ErrorMonitor = {
+  errors: [],
+  maxErrors: 100,
+
+  log(error, context = {}) {
+    const entry = {
+      timestamp: Date.now(),
+      error: error.message,
+      stack: error.stack,
+      context,
+    };
+
+    this.errors.push(entry);
+
+    // Prevent array from growing too large
+    if (this.errors.length > this.maxErrors) {
+      this.errors.shift();
+    }
+
+    // Log to console
+    console.error(`[${context.component}]`, error);
+  },
+
+  getReport() {
+    return {
+      total: this.errors.length,
+      byComponent: this.errors.reduce((acc, { context }) => {
+        acc[context.component] = (acc[context.component] || 0) + 1;
+        return acc;
+      }, {}),
+    };
+  },
+};
+```
+
 ## Best Practices
 
 1. Always clean up resources and event listeners
@@ -221,6 +340,9 @@ const FeatureModule = {
 6. Use consistent error handling patterns
 7. Implement proper initialization and shutdown procedures
 8. Keep modifications focused and modular
+9. Use batch processing for large operations
+10. Implement proper rate limiting
+11. Monitor and log errors appropriately
 
 ## Common Pitfalls
 
@@ -231,5 +353,8 @@ const FeatureModule = {
 5. Not cleaning up on window unload
 6. Hard-coding paths or preferences
 7. Not handling edge cases
+8. Processing too many items at once
+9. Running operations too frequently
+10. Not monitoring error patterns
 
 Remember these core concepts when developing uc.js modifications to ensure robust and maintainable code.

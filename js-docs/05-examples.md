@@ -1,6 +1,6 @@
 # Examples of UserChrome.js Modifications
 
-This document provides practical examples of Firefox modifications, from basic to complex implementations. Each example demonstrates the concepts covered in previous sections.
+This document provides practical examples of Firefox modifications, from basic to complex implementations.
 
 ## Basic Examples
 
@@ -21,62 +21,71 @@ BrowserUIUtils.trimURL = function trimURL(aURL) {
 };
 ```
 
-### 2. Clear Button
+### 2. Theme Integrator
 
 ```javascript
 // ==UserScript==
-// @name          Clear Button
+// @name          Theme Integration
 // @version       2024/01/01
-// @description   Adds a clear button for tabs
 // ==/UserScript==
 
 (function () {
-  const styles = `
-    #clear-button {
-      border: none;
-      background: none;
-      padding: 4px 6px;
-      color: light-dark(rgba(1, 1, 1, 0.7), rgba(255, 255, 255, 0.7));
-      cursor: pointer;
-    }
-    
-    #clear-button:hover {
-      background: light-dark(rgba(1, 1, 1, 0.1), rgba(255, 255, 255, 0.1));
-      border-radius: 4px;
-    }
-  `;
+  // Theme variables
+  const THEME_VARS = {
+    light: {
+      primary: "#a0d490",
+      background: "rgba(255, 255, 255, 0.1)",
+      text: "rgb(0, 0, 0)",
+    },
+    dark: {
+      primary: "#7ab562",
+      background: "rgba(0, 0, 0, 0.2)",
+      text: "rgb(255, 255, 255)",
+    },
+  };
 
-  function init() {
-    // Inject styles
-    let styleSheet = document.createElement("style");
-    styleSheet.textContent = styles;
-    document.head.appendChild(styleSheet);
+  // Inject theme styles
+  function injectThemeStyles() {
+    const css = `
+      :root[data-theme="light"] {
+        --zen-primary-color: ${THEME_VARS.light.primary};
+        --zen-background: ${THEME_VARS.light.background};
+        --zen-text: ${THEME_VARS.light.text};
+      }
+      
+      :root[data-theme="dark"] {
+        --zen-primary-color: ${THEME_VARS.dark.primary};
+        --zen-background: ${THEME_VARS.dark.background};
+        --zen-text: ${THEME_VARS.dark.text};
+      }
+    `;
 
-    // Create button
-    const button = document.createElement("button");
-    button.id = "clear-button";
-    button.innerHTML = "↓ Clear";
-
-    // Add to toolbar
-    const toolbar = document.getElementById("TabsToolbar");
-    toolbar.appendChild(button);
-
-    // Handle clicks
-    button.addEventListener("click", () => {
-      Array.from(gBrowser.tabs)
-        .filter((tab) => !tab.pinned && !tab.selected)
-        .forEach((tab) => gBrowser.removeTab(tab));
-    });
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.appendChild(style);
   }
 
-  // Initialize on window load
+  // Watch theme changes
+  function watchTheme() {
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const updateTheme = (e) => {
+      document.documentElement.dataset.theme = e.matches ? "dark" : "light";
+    };
+
+    mediaQuery.addListener(updateTheme);
+    updateTheme(mediaQuery);
+  }
+
+  // Initialize
   if (gBrowserInit.delayedStartupFinished) {
-    init();
+    injectThemeStyles();
+    watchTheme();
   } else {
     let delayedStartupFinished = (subject, topic) => {
       if (topic == "browser-delayed-startup-finished" && subject == window) {
         Services.obs.removeObserver(delayedStartupFinished, topic);
-        init();
+        injectThemeStyles();
+        watchTheme();
       }
     };
     Services.obs.addObserver(
@@ -89,89 +98,130 @@ BrowserUIUtils.trimURL = function trimURL(aURL) {
 
 ## Intermediate Examples
 
-### 3. Pinned Tab Colorizer
+### 3. Media Controls Integration
 
 ```javascript
 // ==UserScript==
-// @name          Pinned Tab Colorizer
+// @name          Media Controls
 // @version       2024/01/01
-// @description   Colors pinned tabs based on favicon
 // ==/UserScript==
 
 (function () {
-  // Extract dominant color from favicon
-  async function extractDominantColor(favicon) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "Anonymous";
+  const MediaControls = {
+    init() {
+      this.createControls();
+      this.watchMediaState();
+    },
 
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0, img.width, img.height);
+    createControls() {
+      const toolbar = document.createElement("div");
+      toolbar.id = "zen-media-controls-toolbar";
 
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const color = processImageData(imageData);
-        resolve(color);
-      };
+      // Create controls
+      const controls = `
+        <button id="zen-media-playpause-button"></button>
+        <button id="zen-media-mute-button"></button>
+        <div id="zen-media-progress-bar"></div>
+        <div id="zen-media-info"></div>
+      `;
 
-      img.onerror = () => reject(new Error("Failed to load favicon"));
-      img.src = favicon;
-    });
-  }
+      toolbar.innerHTML = controls;
+      document.getElementById("browser").appendChild(toolbar);
+    },
 
-  // Apply color to tab
-  async function colorizeTab(tab) {
-    if (!tab.pinned) return;
-
-    try {
-      const favicon = tab.querySelector(".tab-icon-image");
-      if (!favicon) return;
-
-      const color = await extractDominantColor(favicon.src);
-
-      const background = tab.querySelector(".tab-background");
-      background.style.backgroundColor = color;
-      background.style.setProperty("--tab-color", color);
-    } catch (ex) {
-      console.error("Error colorizing tab:", ex);
-    }
-  }
-
-  // Watch for tab changes
-  function watchTabs() {
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (
-          mutation.type === "attributes" &&
-          mutation.attributeName === "pinned"
-        ) {
-          colorizeTab(mutation.target);
+    watchMediaState() {
+      // Watch tab media states
+      gBrowser.tabContainer.addEventListener("TabAttrModified", (e) => {
+        const tab = e.target;
+        if (tab.hasAttribute("soundplaying")) {
+          this.updateMediaInfo(tab);
         }
-      }
-    });
+      });
+    },
 
-    const tabsContainer = document.getElementById("tabbrowser-tabs");
-    observer.observe(tabsContainer, {
-      attributes: true,
-      attributeFilter: ["pinned"],
-      subtree: true,
-    });
-
-    // Initial coloring
-    document.querySelectorAll(".tabbrowser-tab[pinned]").forEach(colorizeTab);
-  }
+    updateMediaInfo(tab) {
+      const mediaInfo = document.getElementById("zen-media-info");
+      mediaInfo.textContent =
+        tab.getAttribute("media-title") || tab.getAttribute("label");
+    },
+  };
 
   // Initialize
   if (gBrowserInit.delayedStartupFinished) {
-    watchTabs();
+    MediaControls.init();
   } else {
     let delayedStartupFinished = (subject, topic) => {
       if (topic == "browser-delayed-startup-finished" && subject == window) {
         Services.obs.removeObserver(delayedStartupFinished, topic);
-        watchTabs();
+        MediaControls.init();
+      }
+    };
+    Services.obs.addObserver(
+      delayedStartupFinished,
+      "browser-delayed-startup-finished"
+    );
+  }
+})();
+```
+
+### 4. Picture-in-Picture Enhancement
+
+```javascript
+// ==UserScript==
+// @name          Enhanced PiP
+// @version       2024/01/01
+// ==/UserScript==
+
+(function () {
+  const PiPManager = {
+    init() {
+      this.setupControls();
+      this.watchPiPState();
+    },
+
+    setupControls() {
+      // Add custom controls to PiP window
+      const controls = document.createElement("div");
+      controls.id = "custom-pip-controls";
+      controls.innerHTML = `
+        <div class="controls-bottom">
+          <div class="scrubber"></div>
+          <div class="buttons">
+            <button class="playpause"></button>
+            <button class="mute"></button>
+          </div>
+        </div>
+      `;
+
+      document.querySelector(".player-holder")?.appendChild(controls);
+    },
+
+    watchPiPState() {
+      // Watch for PiP toggle
+      gBrowser.tabContainer.addEventListener("TabAttrModified", (e) => {
+        const tab = e.target;
+        if (tab.hasAttribute("pictureinpicture")) {
+          this.handlePiPToggle(tab);
+        }
+      });
+    },
+
+    handlePiPToggle(tab) {
+      const isPiP = tab.hasAttribute("pictureinpicture");
+      if (isPiP) {
+        this.setupControls();
+      }
+    },
+  };
+
+  // Initialize with proper timing
+  if (gBrowserInit.delayedStartupFinished) {
+    PiPManager.init();
+  } else {
+    let delayedStartupFinished = (subject, topic) => {
+      if (topic == "browser-delayed-startup-finished" && subject == window) {
+        Services.obs.removeObserver(delayedStartupFinished, topic);
+        PiPManager.init();
       }
     };
     Services.obs.addObserver(
@@ -184,137 +234,85 @@ BrowserUIUtils.trimURL = function trimURL(aURL) {
 
 ## Advanced Examples
 
-### 4. Tab Groups
+### 5. Workspace Manager
 
 ```javascript
 // ==UserScript==
-// @name          Advanced Tab Groups
+// @name          Workspace Manager
 // @version       2024/01/01
-// @description   Implements advanced tab grouping functionality
 // ==/UserScript==
 
 (function () {
-  // Configuration
-  const CONFIG = {
-    stateFile: "tab-groups.json",
-    animations: true,
-    debug: false,
-  };
-
-  // State management
-  const State = {
-    groups: new Map(),
-    activeGroup: null,
-
-    async save() {
-      const data = Array.from(this.groups.entries());
-      await IOUtils.writeJSON(CONFIG.stateFile, data);
+  const WorkspaceManager = {
+    init() {
+      this.setupUI();
+      this.setupEvents();
+      this.loadState();
     },
 
-    async load() {
-      try {
-        const data = await IOUtils.readJSON(CONFIG.stateFile);
-        this.groups = new Map(data);
-      } catch (ex) {
-        console.error("Failed to load state:", ex);
-      }
-    },
-  };
+    setupUI() {
+      // Create workspace UI
+      const button = document.createElement("button");
+      button.id = "zen-workspaces-button";
+      button.innerHTML = `
+        <div class="subviewbutton-container">
+          <div class="workspace-indicators"></div>
+        </div>
+      `;
 
-  // UI Components
-  const UI = {
-    styles: `
-      .tab-group {
-        border-radius: var(--tab-border-radius);
-        margin: 4px;
-        transition: max-height 0.3s ease;
-      }
-
-      .tab-group[collapsed] {
-        max-height: 32px;
-        overflow: hidden;
-      }
-
-      .tab-group-header {
-        display: flex;
-        align-items: center;
-        padding: 4px 8px;
-        background: var(--toolbar-bgcolor);
-        cursor: pointer;
-      }
-    `,
-
-    createGroupHeader(name) {
-      const header = document.createElement("div");
-      header.className = "tab-group-header";
-      header.textContent = name;
-      return header;
+      document.getElementById("nav-bar").appendChild(button);
     },
 
-    createGroup(id, name) {
-      const group = document.createElement("div");
-      group.className = "tab-group";
-      group.setAttribute("group-id", id);
+    setupEvents() {
+      // Watch workspace changes
+      const button = document.getElementById("zen-workspaces-button");
+      button.addEventListener("click", () => this.toggleWorkspacePanel());
 
-      const header = this.createGroupHeader(name);
-      group.appendChild(header);
-
-      return group;
+      // Watch tab moves
+      gBrowser.tabContainer.addEventListener("TabMove", (e) => {
+        this.updateWorkspaceState();
+      });
     },
-  };
 
-  // Event Handlers
-  const Events = {
-    onTabMove(event) {
-      const tab = event.target;
-      const group = tab.closest(".tab-group");
-      if (group) {
-        State.groups.get(group.getAttribute("group-id")).tabs.push(tab.id);
-        State.save();
+    loadState() {
+      // Load saved workspace state
+      const state = Services.prefs.getStringPref(
+        "extensions.zen.workspaces",
+        "{}"
+      );
+      this.state = JSON.parse(state);
+      this.applyState();
+    },
+
+    applyState() {
+      // Apply workspace configuration
+      for (const [id, workspace] of Object.entries(this.state)) {
+        this.createWorkspace(id, workspace);
       }
     },
 
-    onGroupCollapse(event) {
-      const group = event.target.closest(".tab-group");
-      group.toggleAttribute("collapsed");
-      State.save();
+    createWorkspace(id, config) {
+      const button = document.createElement("div");
+      button.className = "subviewbutton";
+      button.setAttribute("workspace-id", id);
+      button.textContent = config.emoji;
+
+      if (config.active) {
+        button.setAttribute("active", "");
+      }
+
+      document.querySelector(".workspace-indicators").appendChild(button);
     },
   };
 
   // Initialize
-  async function init() {
-    // Inject styles
-    const style = document.createElement("style");
-    style.textContent = UI.styles;
-    document.head.appendChild(style);
-
-    // Load state
-    await State.load();
-
-    // Setup groups
-    for (const [id, group] of State.groups) {
-      const element = UI.createGroup(id, group.name);
-      document.getElementById("tabbrowser-tabs").appendChild(element);
-    }
-
-    // Watch for changes
-    gBrowser.tabContainer.addEventListener("TabMove", Events.onTabMove);
-
-    // Clean up on window unload
-    window.addEventListener("unload", () => {
-      State.save();
-      gBrowser.tabContainer.removeEventListener("TabMove", Events.onTabMove);
-    });
-  }
-
-  // Start when browser is ready
   if (gBrowserInit.delayedStartupFinished) {
-    init();
+    WorkspaceManager.init();
   } else {
     let delayedStartupFinished = (subject, topic) => {
       if (topic == "browser-delayed-startup-finished" && subject == window) {
         Services.obs.removeObserver(delayedStartupFinished, topic);
-        init();
+        WorkspaceManager.init();
       }
     };
     Services.obs.addObserver(
@@ -325,64 +323,99 @@ BrowserUIUtils.trimURL = function trimURL(aURL) {
 })();
 ```
 
-## Integration Examples
-
-### 5. External API Integration
+### 6. Platform Integration
 
 ```javascript
-// Example of integrating with an external API
-const API = {
-  async request(endpoint, options = {}) {
-    const response = await fetch(endpoint, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...options.headers,
-      },
-    });
+// ==UserScript==
+// @name          Platform Integration
+// @version       2024/01/01
+// ==/UserScript==
 
-    if (!response.ok) {
-      throw new Error(`API Error: ${response.status}`);
-    }
+(function () {
+  const PlatformIntegration = {
+    init() {
+      this.detectPlatform();
+      this.applyPlatformStyles();
+      this.setupPlatformFeatures();
+    },
 
-    return response.json();
-  },
+    detectPlatform() {
+      this.platform = AppConstants.platform;
+      document.documentElement.setAttribute("data-platform", this.platform);
+    },
 
-  async translate(text) {
-    return this.request("https://api.example.com/translate", {
-      method: "POST",
-      body: JSON.stringify({ text }),
-    });
-  },
-};
+    applyPlatformStyles() {
+      const css = `
+        @media (-moz-platform: windows) {
+          :root {
+            --window-control-offset: 138px;
+            --window-drag-space: 24px;
+          }
+        }
+        
+        @media (-moz-platform: macos) {
+          :root {
+            --window-control-offset: 72px;
+            --window-drag-space: 32px;
+          }
+        }
+      `;
 
-// Usage in a browser mod
-const TranslationMod = {
-  async translateSelection() {
-    const text = window.getSelection().toString();
-    if (!text) return;
+      const style = document.createElement("style");
+      style.textContent = css;
+      document.head.appendChild(style);
+    },
 
-    try {
-      const result = await API.translate(text);
+    setupPlatformFeatures() {
+      switch (this.platform) {
+        case "win":
+          this.setupWindowsFeatures();
+          break;
+        case "macosx":
+          this.setupMacOSFeatures();
+          break;
+        case "linux":
+          this.setupLinuxFeatures();
+          break;
+      }
+    },
 
-      // Show result in popup
-      this.showPopup(result.translation);
-    } catch (ex) {
-      console.error("Translation failed:", ex);
-    }
-  },
+    setupWindowsFeatures() {
+      // Windows-specific features
+      if (window.windowState === window.STATE_MAXIMIZED) {
+        document.documentElement.setAttribute("windowcontrol", "maximized");
+      }
+    },
 
-  showPopup(text) {
-    // Create popup UI...
-  },
-};
+    setupMacOSFeatures() {
+      // macOS-specific features
+      document.documentElement.setAttribute("inset", "");
+    },
+  };
+
+  // Initialize
+  if (gBrowserInit.delayedStartupFinished) {
+    PlatformIntegration.init();
+  } else {
+    let delayedStartupFinished = (subject, topic) => {
+      if (topic == "browser-delayed-startup-finished" && subject == window) {
+        Services.obs.removeObserver(delayedStartupFinished, topic);
+        PlatformIntegration.init();
+      }
+    };
+    Services.obs.addObserver(
+      delayedStartupFinished,
+      "browser-delayed-startup-finished"
+    );
+  }
+})();
 ```
 
-These examples demonstrate how to combine the various concepts covered in the documentation to create practical browser modifications. Remember to:
+Remember to:
 
-1. Follow the initialization patterns
-2. Implement proper cleanup
-3. Handle errors gracefully
-4. Use appropriate state management
-5. Follow Firefox's design patterns
-6. Test thoroughly across versions
+1. Follow proper initialization patterns
+2. Clean up resources and event listeners
+3. Handle platform differences
+4. Implement proper error handling
+5. Consider performance implications
+6. Test thoroughly across different versions
